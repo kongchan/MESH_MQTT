@@ -73,18 +73,33 @@ void  ICACHE_FLASH_ATTR TaskMeter(u8 *buf, u16 len)
 
 	if(MqttOK)
 	{
-		MQTT_Publish(mqttClient, mqtt_topic_send, v9881_data->jsonString, strlen(v9881_data->jsonString), 0, 0);
+		//MQTT_Publish(mqttClient, mqtt_topic_send, v9881_data->jsonString, strlen(v9881_data->jsonString), 0, 0);
+		char *tst_data = (char *)os_malloc(256 * sizeof(char));
+		os_sprintf(tst_data, "mqtt_topic_send:");
+		os_sprintf(tst_data + os_strlen(tst_data), "%s_:%s", mqtt_id, v9881_data->jsonString);
+		udp_mesh_M_PROTO_NONE(tst_data);
 
 		if (MqttOK == 2)
 		{
-			MQTT_Publish(mqttClient, "/meter/test", v9881_data->jsonString, strlen(v9881_data->jsonString), 0, 0);
+			//MQTT_Publish(mqttClient, "/meter/test", v9881_data->jsonString, strlen(v9881_data->jsonString), 0, 0);
+			os_memset(tst_data, 0, sizeof(os_strlen(tst_data)));
+			os_sprintf(tst_data, "/meter/test:");
+			os_sprintf(tst_data + os_strlen(tst_data), "%s", v9881_data->jsonString);
+			udp_mesh_M_PROTO_NONE(tst_data);
 		}
 		else if (MqttOK == 1)
 		{
-			MQTT_Publish(mqttClient, "/meter/data", v9881_data->jsonString, strlen(v9881_data->jsonString), 0, 0);
+			//MQTT_Publish(mqttClient, "/meter/data", v9881_data->jsonString, strlen(v9881_data->jsonString), 0, 0);
+			os_memset(tst_data, 0, sizeof(os_strlen(tst_data)));
+			os_sprintf(tst_data, "/meter/data:");
+			os_sprintf(tst_data + os_strlen(tst_data), "%s", v9881_data->jsonString);
+			udp_mesh_M_PROTO_NONE(tst_data);
+		
 		}
 		MqttOK = 0;
+		MESH_DEMO_FREE(tst_data);
 	}
+
 
 	if(HttpOK)
 	{

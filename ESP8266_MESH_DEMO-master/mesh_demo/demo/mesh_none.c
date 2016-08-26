@@ -23,8 +23,11 @@ extern u8 mqtt_id[11];
 
 enum None_MyEnum
 {
-	Subscribe = 0,
-	PING,
+	Subscribe = 1,
+	mqtt_topic_send = 2,
+	test = 3,
+	data = 4,
+
 };
 extern struct espconn g_ser_conn;
 
@@ -34,8 +37,15 @@ none_mode_parse(uint8_t *pdata)
 	char *mode = pdata;
 
 	if (os_strstr(mode, "Subscribe"))
-		return 0;
-
+		return 1;
+	if (os_strstr(mode, "mqtt_topic_send"))
+		return 2;
+	if (os_strstr(mode, "/meter/test"))
+		return 3;
+	if (os_strstr(mode, "/meter/data"))
+		return 4;
+	
+	return 0;
 }
 
 void ICACHE_FLASH_ATTR
@@ -53,12 +63,13 @@ mesh_none_proto_parser(uint8_t *mesh_header, uint8_t *pdata, uint16_t len)
 	MESH_PARSER_PRINT("************ get none and parse *********\n");
 	enum None_MyEnum mode = 0;
 	mode = none_mode_parse(pdata);
+	char *Subscribe_mqtt_id = pdata;
+	MESH_PARSER_PRINT("********* Json_MyEnum mode = %d **********\n", &mode);
 	switch (mode)
 	{
 	case Subscribe:
 		MESH_PARSER_PRINT("**************into Subscribe parse*************\n");
 		u8 temp[256];
-		char *Subscribe_mqtt_id = pdata;
 		Subscribe_mqtt_id = Subscribe_mqtt_id + 16;
 		MQTT_Subscribe(mqttClient, Subscribe_mqtt_id, 0);
 		os_sprintf(temp, "%s connected", Subscribe_mqtt_id);
@@ -67,9 +78,33 @@ mesh_none_proto_parser(uint8_t *mesh_header, uint8_t *pdata, uint16_t len)
 		p2p_mesh_json(header, "Subscribed", len);
 		MESH_DEMO_FREE(header);
 		break;
-	case PING:
-		MESH_PARSER_PRINT("**************into PING parse*************\n");
+
+	case mqtt_topic_send:
+		MESH_PARSER_PRINT("**************into mqtt_topic_send parse*************\n");
+
+		Subscribe_mqtt_id = Subscribe_mqtt_id + 22;
+		*(Subscribe_mqtt_id + 11) = '\0';
+		os_printf("************ Subscribe_mqtt_id: %s **********\n", Subscribe_mqtt_id);
+		pdata = pdata + 34;
+		os_printf("************ pdata: %s **********\n", pdata);
+
+		MQTT_Publish(mqttClient, Subscribe_mqtt_id, pdata, strlen(pdata), 0, 0);
 		break;
+
+	case test:
+		MESH_PARSER_PRINT("**************into test parse*************\n");
+		pdata = pdata + 18;
+		MESH_PARSER_PRINT("********** v9881_data->jsonString: %s **********\n", pdata);
+		MQTT_Publish(mqttClient, "/meter/test", pdata, strlen(pdata), 0, 0);
+		break;
+
+	case data:
+		MESH_PARSER_PRINT("**************into data parse*************\n");
+		pdata = pdata + 18;
+		MESH_PARSER_PRINT("********** v9881_data->jsonString: %s **********\n", pdata);
+		MQTT_Publish(mqttClient, "/meter/data", pdata, strlen(pdata), 0, 0);
+		break;
+
 	default:
 		MESH_PARSER_PRINT("******** default ********\n");
 		break;
@@ -183,7 +218,7 @@ void ICACHE_FLASH_ATTR mqtt_subscribe_udp()
 {
 	char *tst_data = (char *)os_malloc(256 * sizeof(char));
 	os_sprintf(tst_data, "Subscribe:");
-	os_sprintf(tst_data + os_strlen(tst_data), "%s_", mqtt_id);
+	os_sprintf(tst_data + os_strlen(tst_data), "%s", mqtt_id);
 	MESH_PARSER_PRINT("****** into the mqtt_subscribe_udp ****\n");
 	udp_mesh_M_PROTO_NONE(tst_data);
 	MESH_DEMO_FREE(tst_data);

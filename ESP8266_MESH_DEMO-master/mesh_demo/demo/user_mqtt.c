@@ -12,6 +12,8 @@
 #include "debug.h"
 #include "user_upgrade.h"
 
+#include "mesh_json.h"
+
 extern bool HttpOK;
 extern bool MqttOK;
 
@@ -83,6 +85,8 @@ void  ICACHE_FLASH_ATTR mqttDataCb(uint32_t *args, const char* topic, uint32_t t
 	os_memcpy(dataBuf, data, data_len);
 	dataBuf[data_len] = 0;
 
+	char *buf = (char *)os_malloc(256 * sizeof(char *));
+
 	INFO("MqttReceive topic: %s, data: %s \r\n", topicBuf, dataBuf);
 
 	if(1)
@@ -90,19 +94,32 @@ void  ICACHE_FLASH_ATTR mqttDataCb(uint32_t *args, const char* topic, uint32_t t
 
 		if(os_strcmp(dataBuf,"ReadData") == 0 )
 		{
-			INFO("MQTT: Receive MeterData Requestion!!!\r\n");
-			MqttOK = 1;
-			HttpOK = 1;
-
-			uart0_tx_buffer(bufMeter, 8);
-			user_check_ip();
+			if (os_strstr(topicBuf, "all") || os_strstr(topicBuf, mqtt_id))
+			{
+				INFO("MQTT: Receive MeterData Requestion!!!\r\n");
+				MqttOK = 1;
+				HttpOK = 1;
+				uart0_tx_buffer(bufMeter, 8);
+				user_check_ip();
+			}
+			os_printf("*******into mqttDataCb ReadData *****\n");
+			os_sprintf(buf, "%s:%s", topicBuf, dataBuf);
+			os_printf("***** buf:%s ******\n", buf);
+			bcast_mesh_json(buf);
 		}
 
 		else if(os_strcmp(dataBuf,"ReadTest") == 0)
 		{
-			INFO("MQTT: Receive MeterData Requestion!!!\r\n");
-			MqttOK = 2;
-			uart0_tx_buffer(bufMeter, 8);
+			if (os_strstr(topicBuf, "all") || os_strstr(topicBuf, mqtt_id))
+			{
+				INFO("MQTT: Receive MeterData Requestion!!!\r\n");
+				MqttOK = 2;
+				uart0_tx_buffer(bufMeter, 8);
+			}
+			os_printf("*******into mqttDataCb ReadTest *****\n");
+			os_sprintf(buf, "%s:%s", topicBuf, dataBuf);
+			os_printf("***** buf:%s ******\n", buf);
+			bcast_mesh_json(buf);
 		}
 
 		else if(os_strcmp(dataBuf,"ping") == 0)
@@ -143,7 +160,7 @@ void  ICACHE_FLASH_ATTR mqttDataCb(uint32_t *args, const char* topic, uint32_t t
 		else if(os_strcmp(dataBuf, "LED_3_0") == 0)
 			LED_OFF(LED3);
 	}
-
+	os_free(buf);
 	os_free(topicBuf);
 	os_free(dataBuf);
 }

@@ -21,4 +21,5 @@
  /opt/xtensa-lx106-elf/lib/gcc/xtensa-lx106-elf/4.8.2/include/machine/stdlib.h \
  /opt/xtensa-lx106-elf/lib/gcc/xtensa-lx106-elf/4.8.2/include/alloca.h \
  ../include/typedef.h ../include/debug.h user_upgrade.h \
- ../../include/eagle_soc.h
+ ../../include/eagle_soc.h ../include/mesh_json.h ../../include/mesh.h \
+ ../../include/user_interface.h ../../include/espconn.h

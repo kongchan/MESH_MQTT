@@ -251,6 +251,8 @@ void ICACHE_FLASH_ATTR mesh_enable_cb(int8_t res)
 		user_check_ip();
 		user_time_init();
 		MESH_DEMO_PRINT("******* I am the root ***********\n");
+
+
 	}
 	if (!espconn_mesh_is_root())             //non root 向root 广播订阅的信息
 	{
@@ -533,6 +535,7 @@ void user_init(void)
      */
     uart_div_modify(0, UART_CLK_FREQ / UART_BAUT_RATIO);
     uart_div_modify(1, UART_CLK_FREQ / UART_BAUT_RATIO);
+
 	//uart_init_2(9600, 115200);//设置串口波特率
 	
 	if (!router_init()) {
@@ -564,7 +567,7 @@ void user_init(void)
 	os_sprintf(mqtt_topic_send, "%s_", mqtt_id);
 	os_printf("CPU_ID: %s, SendTopic:%s\r\n", mqtt_id, mqtt_topic_send);
 
-
+	wifi_set_event_handler_cb(wifi_handle_event_cb);
     /*
      * while system runs smartconfig (STA mode), mesh (STA + SoftAp mode) must not been enabled,
      * So wait for esptouch to run over and then execute espconn_mesh_enable

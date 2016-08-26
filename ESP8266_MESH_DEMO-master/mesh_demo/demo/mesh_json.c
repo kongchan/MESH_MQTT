@@ -40,8 +40,13 @@ extern os_timer_t mqtt_subscribe_timer;
 
 enum Json_MyEnum
 {
-	ReadData = 0,
-	Subscribed,
+	ReadData = 1,
+	Subscribed = 2,
+	ReadTest = 3,
+	ping = 4,
+	upgrade = 5,
+	list = 6,
+	restart = 7,
 };
 extern struct espconn g_ser_conn;
 
@@ -49,34 +54,53 @@ int ICACHE_FLASH_ATTR
 json_mode_parse(uint8_t *pdata)
 {
 	char *mode = pdata;
-
+	os_printf("*******pdata: %s *****\n", pdata);
 	if(os_strstr(mode, "ReadData"))
-		return 0;
-	if (os_strstr(mode, "Subscribed"))
 		return 1;
+	if (os_strstr(mode, "Subscribed"))
+		return 2;
+	if (os_strstr(mode, "ReadTest"))
+		return 3;
+	if (os_strstr(mode, "ping"))
+		return 4;
+	if (os_strstr(mode, "upgrade"))
+		return 5;
+	if (os_strstr(mode, "list"))
+		return 6;
+	if (os_strstr(mode, "restart"))
+		return 7;
 	
+	return 0;
 }
 
 void ICACHE_FLASH_ATTR
 mesh_json_proto_parser(uint8_t *mesh_header, uint8_t *pdata, uint16_t len)
 {
     MESH_PARSER_PRINT("len:%u, data:%s\n", len, pdata);
+
 	if (espconn_mesh_is_root())
 	{
 		MESH_PARSER_PRINT("****** root do not json parse****\n");
 		return;
 	}
+
 	/*
 	解释pdata的形式，而进行对应的读取数据或者之类。再组装成mesh包发回给去。
 	*/
 	MESH_PARSER_PRINT("************ get json and parse *********\n");
 	enum Json_MyEnum mode = 0;
+
 	mode = json_mode_parse(pdata);
+//	MESH_PARSER_PRINT("********* Json_MyEnum mode = %d **********\n", &mode);
 	switch (mode)
 	{
 	case ReadData:
 		MESH_PARSER_PRINT("**************into ReadData parse*************\n");
-
+		if (!(os_strstr(pdata, "all") || os_strstr(pdata, mqtt_id)))
+		{
+			MESH_PARSER_PRINT("***** it is not your packet *****\n");
+			return;
+		}
 		MqttOK = 1;
 		HttpOK = 1;
 		uart0_tx_buffer(bufMeter, 8);
@@ -86,8 +110,42 @@ mesh_json_proto_parser(uint8_t *mesh_header, uint8_t *pdata, uint16_t len)
 		MESH_PARSER_PRINT("**************into Subscribed parse*************\n");
 
 			os_timer_disarm(&mqtt_subscribe_timer);
+		break;
+
+	case ReadTest:
+		MESH_PARSER_PRINT("**************into ReadTest parse*************\n");
+		if (!(os_strstr(pdata, "all") || os_strstr(pdata, mqtt_id)))
+		{
+			MESH_PARSER_PRINT("***** it is not your packet *****\n");
+			return;
+		}
+		MqttOK = 2;
+		uart0_tx_buffer(bufMeter, 8);
+		break;
+
+	case ping:
+		MESH_PARSER_PRINT("**************into ping parse*************\n");
 
 		break;
+
+	case upgrade:
+		MESH_PARSER_PRINT("**************into upgrade parse*************\n");
+
+		
+		break;
+
+	case list:
+		MESH_PARSER_PRINT("**************into list parse*************\n");
+
+	
+		break;
+
+	case restart:
+		MESH_PARSER_PRINT("**************into restart parse*************\n");
+
+
+		break;
+
 	default:
 		MESH_PARSER_PRINT("******** default ********\n");
 		break;
@@ -440,5 +498,57 @@ p2p_mesh_json(struct mesh_header_format *mesh_header, uint8_t *pdata, uint16_t l
 		MESH_DEMO_FREE(header);
 		return;
 	}
+	MESH_DEMO_FREE(header);
+}
+
+bcast_mesh_json(uint8_t *pdata)
+{
+	char buf[256];
+	uint8_t src[6];
+	uint8_t dst[6];
+	struct mesh_header_format *header = NULL;
+
+	if (!wifi_get_macaddr(STATION_IF, src)) {
+		MESH_PARSER_PRINT("bcast get sta mac fail\n");
+		return;
+	}
+	os_memset(buf, 0, sizeof(buf));
+
+	os_sprintf(buf, "%s", "bcast:");
+	os_sprintf(buf + os_strlen(buf), "%s", pdata);
+
+	os_memset(dst, 0, sizeof(dst));  // use bcast to get all the devices working in mesh from root.
+	header = (struct mesh_header_format *)espconn_mesh_create_packet(
+		dst,     // destiny address (bcast)
+		src,     // source address
+		false,   // not p2p packet
+		true,    // piggyback congest request
+		M_PROTO_JSON,   // packe with JSON format
+		os_strlen(buf), // data length
+		false,   // no option
+		0,       // option total len
+		false,   // no frag
+		0,       // frag type, this packet doesn't use frag
+		false,   // more frag
+		0,       // frag index
+		0);      // frag length
+	if (!header) {
+		MESH_PARSER_PRINT("bcast create packet fail\n");
+		return;
+	}
+
+	if (!espconn_mesh_set_usr_data(header, buf, os_strlen(buf))) {
+		MESH_DEMO_PRINT("bcast set user data fail\n");
+		MESH_DEMO_FREE(header);
+		return;
+	}
+
+	if (espconn_mesh_sent(&g_ser_conn, (uint8_t *)header, header->len)) {
+		MESH_DEMO_PRINT("bcast mesh is busy\n");
+		espconn_mesh_connect(&g_ser_conn);
+		MESH_DEMO_FREE(header);
+		return;
+	}
+
 	MESH_DEMO_FREE(header);
 }
