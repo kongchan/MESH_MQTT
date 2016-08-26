@@ -12,13 +12,86 @@
 #include "osapi.h"
 #include "mesh_parser.h"
 
+#include "ets_sys.h"
+#include "osapi.h"
+#include "mem.h"	
+#include "user_interface.h"
+#include "espconn.h"
+#include "c_types.h"
+#include "gpio.h"
+#include "spi_flash.h"
+#include "smartconfig.h"
+#include "ip_addr.h"
+#include "mqtt.h"
+#include "debug.h"
+#include "user_upgrade.h"
+#include "user_main.h"
+
+#include "mesh.h"
+
+#define  MaxRam 2*1024+4//最大缓存空间
+u8 bufTemp[MaxRam];//串口数据缓存空间
+extern u32 num;//串口数据大小
+extern u8 bufMeter[8];
+extern u8 mqtt_id[11];
+extern bool HttpOK;
+extern bool MqttOK;
+extern os_timer_t mqtt_subscribe_timer;
+
+enum Json_MyEnum
+{
+	ReadData = 0,
+	Subscribed,
+};
 extern struct espconn g_ser_conn;
 
-void ICACHE_FLASH_ATTR
-mesh_json_proto_parser(const void *mesh_header, uint8_t *pdata, uint16_t len)
+int ICACHE_FLASH_ATTR
+json_mode_parse(uint8_t *pdata)
 {
-    MESH_PARSER_PRINT("%s\n", __func__);
+	char *mode = pdata;
+
+	if(os_strstr(mode, "ReadData"))
+		return 0;
+	if (os_strstr(mode, "Subscribed"))
+		return 1;
+	
+}
+
+void ICACHE_FLASH_ATTR
+mesh_json_proto_parser(uint8_t *mesh_header, uint8_t *pdata, uint16_t len)
+{
     MESH_PARSER_PRINT("len:%u, data:%s\n", len, pdata);
+	if (espconn_mesh_is_root())
+	{
+		MESH_PARSER_PRINT("****** root do not json parse****\n");
+		return;
+	}
+	/*
+	解释pdata的形式，而进行对应的读取数据或者之类。再组装成mesh包发回给去。
+	*/
+	MESH_PARSER_PRINT("************ get json and parse *********\n");
+	enum Json_MyEnum mode = 0;
+	mode = json_mode_parse(pdata);
+	switch (mode)
+	{
+	case ReadData:
+		MESH_PARSER_PRINT("**************into ReadData parse*************\n");
+
+		MqttOK = 1;
+		HttpOK = 1;
+		uart0_tx_buffer(bufMeter, 8);
+
+		break;
+	case Subscribed:
+		MESH_PARSER_PRINT("**************into Subscribed parse*************\n");
+
+			os_timer_disarm(&mqtt_subscribe_timer);
+
+		break;
+	default:
+		MESH_PARSER_PRINT("******** default ********\n");
+		break;
+	}
 }
 
 void ICACHE_FLASH_ATTR
@@ -36,9 +109,13 @@ mesh_json_bcast_test()
 
     os_memset(buf, 0, sizeof(buf));
 
-    os_sprintf(buf, "%s", "{\"bcast\":\"");
-    os_sprintf(buf + os_strlen(buf), MACSTR, MAC2STR(src));
-    os_sprintf(buf + os_strlen(buf), "%s", "\"}\r\n");
+
+    //os_sprintf(buf, "%s", "{\"bcast\":\"");
+    //os_sprintf(buf + os_strlen(buf), MACSTR, MAC2STR(src));
+    //os_sprintf(buf + os_strlen(buf), "%s", "\"}\r\n");
+
+	os_sprintf(buf, "%s", "bcast:");
+	os_sprintf(buf + os_strlen(buf), "%s", "ReadData");
 
     os_memset(dst, 0, sizeof(dst));  // use bcast to get all the devices working in mesh from root.
     header = (struct mesh_header_format *)espconn_mesh_create_packet(
@@ -103,11 +180,14 @@ mesh_json_p2p_test()
      * otherwise, we use root device as destination.
      */
     idx = dev_count > 1 ? (os_random() % dev_count) : 0;
-    if (!idx) {
+    if (!idx) 
+	{
         if (!mesh_device_get_root((const struct mesh_device_mac_type **)&list))
             return;
         os_memcpy(dst, list, sizeof(dst));
-    } else {
+    } 
+	else 
+	{
         os_memcpy(dst, list + idx, sizeof(dst));
     }
 
@@ -312,4 +392,53 @@ mesh_json_p2p_test_init()
     os_timer_disarm(&p2p_timer);
     os_timer_setfn(&p2p_timer, (os_timer_func_t *)mesh_json_p2p_test, NULL);
     os_timer_arm(&p2p_timer, 19000, true);
+}
+
+void ICACHE_FLASH_ATTR
+p2p_mesh_json(struct mesh_header_format *mesh_header, uint8_t *pdata, uint16_t len)
+{
+	char buf[32];
+	uint8_t *src = NULL, *dst = NULL;
+	struct mesh_header_format *header = NULL;
+
+	os_memset(buf, 0, sizeof(buf));
+	os_sprintf(buf, "%s", "p2p:");
+	os_sprintf(buf + os_strlen(buf), "%s", pdata);
+	if (!espconn_mesh_get_src_addr(mesh_header, &src) || !espconn_mesh_get_dst_addr(mesh_header, &dst)) {
+		MESH_DEMO_PRINT("get addr fail\n");
+		return;
+	}
+	MESH_PARSER_PRINT("******p2p_mesh_json src:%s, dst:%s ********\n", src, dst);
+	header = (struct mesh_header_format *)espconn_mesh_create_packet(
+		src,     // destiny address
+		dst,     // source address
+		true,    // not p2p packet
+		true,    // piggyback congest request
+		M_PROTO_JSON,        // packe with JSON format
+		os_strlen(buf),// data length
+		false,   // no option
+		0,       // option total len
+		false,   // no frag
+		0,       // frag type, this packet doesn't use frag
+		false,   // more frag
+		0,       // frag index
+		0);      // frag length
+	if (!header) {
+		MESH_PARSER_PRINT("p2p create packet fail\n");
+		return;
+	}
+
+	if (!espconn_mesh_set_usr_data(header, buf, os_strlen(buf))) {
+		MESH_DEMO_PRINT("p2p set user data fail\n");
+		MESH_DEMO_FREE(header);
+		return;
+	}
+
+	if (espconn_mesh_sent(&g_ser_conn, (uint8_t *)header, header->len)) {
+		MESH_DEMO_PRINT("p2p mesh is busy\n");
+		espconn_mesh_connect(&g_ser_conn);
+		MESH_DEMO_FREE(header);
+		return;
+	}
+	MESH_DEMO_FREE(header);
 }

@@ -16,4 +16,10 @@
  /opt/xtensa-lx106-elf/lib/gcc/xtensa-lx106-elf/4.8.2/include/stddef.h \
  ../include/mesh_parser.h ../include/mesh_http.h ../include/mesh_json.h \
  ../include/mesh_mqtt.h ../include/mesh_none.h ../include/mesh_bin.h \
- ../include/mesh_device.h
+ ../include/mesh_device.h ../include/mqtt.h ../include/mqtt_msg.h \
+ ../../include/user_interface.h ../include/queue.h \
+ ../../include/os_type.h ../include/ringbuf.h \
+ /opt/xtensa-lx106-elf/lib/gcc/xtensa-lx106-elf/4.8.2/include/stdlib.h \
+ /opt/xtensa-lx106-elf/lib/gcc/xtensa-lx106-elf/4.8.2/include/machine/stdlib.h \
+ /opt/xtensa-lx106-elf/lib/gcc/xtensa-lx106-elf/4.8.2/include/alloca.h \
+ ../include/typedef.h

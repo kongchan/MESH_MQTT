@@ -21,25 +21,18 @@
 #include "user_interface.h"
 #include "espconn.h"
 #include "c_types.h"
-
 #include "gpio.h"
 #include "spi_flash.h"
 #include "smartconfig.h"
 #include "ip_addr.h"
 #include "user_mqtt.h"
 #include "gpio16.h"
-
 #include "mqtt.h"
 #include "debug.h"
-
 #include "V9881.h"
-
 #include "tcpclient.h"
-
 #include "http_post.h"
-
 #include "user_key.h"
-
 #include "user_time.h"
 
 
@@ -51,6 +44,22 @@
 #define MESH_DEMO_ZALLOC os_zalloc
 #define MESH_DEMO_MALLOC os_malloc
 
+/*
+	about MQTT_arg
+*/
+#define  MaxRam 2*1024+4//最大缓存空间
+os_timer_t tcp_timer;//串口转网络定时器
+os_timer_t udp_timer;//UDP广播定时器
+u8 bufTemp[MaxRam];//串口数据缓存空间
+u32 cpu_id;
+u8 mqtt_id[11];
+u8 mqtt_topic_send[12];
+MQTT_Client *mqttClient;
+V9881_Data *v9881_data;
+extern bool MqttConFlag;
+u8 temp[256];
+
+
 static esp_tcp ser_tcp;
 struct espconn g_ser_conn;
 
@@ -59,6 +68,7 @@ void ICACHE_FLASH_ATTR esp_mesh_demo_test();
 void ICACHE_FLASH_ATTR mesh_enable_cb(int8_t res);
 void ICACHE_FLASH_ATTR esp_mesh_demo_con_cb(void *);
 void ICACHE_FLASH_ATTR esp_recv_entrance(void *, char *, uint16_t);
+void ICACHE_FLASH_ATTR sendmqttid();
 
 
 void user_rf_pre_init(void){}
@@ -140,27 +150,114 @@ void ICACHE_FLASH_ATTR esp_mesh_demo_con_cb(void *arg)
         MESH_DEMO_PRINT("con_cb, para err\n");
         return;
     }
+	/*
+		when non-root connet successfully, it send the mqtt-id to the root by M_PROTO_MQTT
+	*/
+	//sendmqttid();
+	/*
+	这是发给服务器的一些信息。
+	*/
+    //os_timer_disarm(&tst_timer);
+    //os_timer_setfn(&tst_timer, (os_timer_func_t *)esp_mesh_demo_test, NULL);
+    //os_timer_arm(&tst_timer, 7000, true);
+}
+void ICACHE_FLASH_ATTR sendmqttid()
+{
+	uint8_t src[6];
+	uint8_t dst[6];
+	struct mesh_header_format *header = NULL;
+	/*
+	* this is ucast test case
+	*/
 
-    os_timer_disarm(&tst_timer);
-    os_timer_setfn(&tst_timer, (os_timer_func_t *)esp_mesh_demo_test, NULL);
-    os_timer_arm(&tst_timer, 7000, true);
+	/*
+	* the mesh data can be any content
+	* it can be string(json/http), or binary(MQTT).
+	*/
+	
+	char *tst_data = NULL;
+	os_sprintf(tst_data, "MQTTID;%s_", mqtt_id);
+	// uint8_t tst_data[] = {'a', 'b', 'c', 'd'};}
+	// uint8_t tst_data[] = {0x01, 0x02, 0x03, 0x04, 0x00};
+
+	MESH_DEMO_PRINT("free heap:%u\n", system_get_free_heap_size());
+
+	if (!wifi_get_macaddr(STATION_IF, src)) {
+		MESH_DEMO_PRINT("get sta mac fail\n");
+		return;
+	}
+	MESH_DEMO_MEMCPY(dst, server_ip, sizeof(server_ip));
+	MESH_DEMO_MEMCPY(dst + sizeof(server_ip), &server_port, sizeof(server_port));
+
+	header = (struct mesh_header_format *)espconn_mesh_create_packet(
+		dst,   // destiny address
+		src,   // source address
+		false, // not p2p packet
+		true,  // piggyback congest request
+		M_PROTO_MQTT,  // packe with MQTT format
+		MESH_DEMO_STRLEN(tst_data),  // data length
+		false, // no option
+		0,     // option len
+		false, // no frag
+		0,     // frag type, this packet doesn't use frag
+		false, // more frag
+		0,     // frag index
+		0);    // frag length
+	if (!header) {
+		MESH_DEMO_PRINT("create packet fail\n");
+		return;
+	}
+
+	if (!espconn_mesh_set_usr_data(header, tst_data, MESH_DEMO_STRLEN(tst_data))) {
+		MESH_DEMO_PRINT("set user data fail\n");
+		MESH_DEMO_FREE(header);
+		return;
+	}
+
+	if (espconn_mesh_sent(&g_ser_conn, (uint8_t *)header, header->len)) {
+		MESH_DEMO_PRINT("mesh is busy\n");
+		MESH_DEMO_FREE(header);
+		/*
+		* if fail, we re-connect mesh
+		*/
+		espconn_mesh_connect(&g_ser_conn);
+		return;
+	}
+
+	MESH_DEMO_FREE(header);
 }
 
 void ICACHE_FLASH_ATTR mesh_enable_cb(int8_t res)
 {
 	MESH_DEMO_PRINT("mesh_enable_cb\n");
-
+	LED_ON(LED1);
     if (res == MESH_OP_FAILURE) {
         MESH_DEMO_PRINT("enable mesh fail, re-enable\n");
         espconn_mesh_enable(mesh_enable_cb, MESH_ONLINE);
         return;
     }
 
-    if (espconn_mesh_get_usr_context() &&
-        espconn_mesh_is_root() &&
-        res == MESH_LOCAL_SUC)
-        goto TEST_SCENARIO;
-
+	if (espconn_mesh_is_root() && res == MESH_LOCAL_SUC)
+		/*goto TEST_SCENARIO;*/
+	{
+		mesh_device_list_init();	
+//		mesh_json_mcast_test_init();
+//		mesh_json_bcast_test_init();
+//		mesh_json_p2p_test_init();
+		/*
+		IF the device is the root,it can surfce and connect MQTT-service
+		*/
+		FunMqttStart(mqttClient, MQTT_HOST);
+		user_check_ip();
+		user_time_init();
+		MESH_DEMO_PRINT("******* I am the root ***********\n");
+	}
+	if (!espconn_mesh_is_root())             //non root 向root 广播订阅的信息
+	{
+		mqtt_subscribe_init();
+	}
+	mesh_topo_test_init();                   //root 不发送，但 non-root 会发送bcost none包出去
+	MESH_DEMO_PRINT("******* the root come here?? *******\n");
     /*
      * try to estable user virtual connect
      * user can to use the virtual connect to sent packet to any node, server or mobile.
@@ -196,19 +293,33 @@ void ICACHE_FLASH_ATTR mesh_enable_cb(int8_t res)
 
     if (espconn_mesh_connect(&g_ser_conn)) {
         MESH_DEMO_PRINT("connect err\n");
-        if (espconn_mesh_is_root())
-            espconn_mesh_enable(mesh_enable_cb, MESH_LOCAL);
-        else
-            espconn_mesh_enable(mesh_enable_cb, MESH_ONLINE);
+		if (espconn_mesh_is_root())
+		{
+			MESH_DEMO_PRINT("****** espconn_mesh_is_root *******\n");
+			espconn_mesh_enable(mesh_enable_cb, MESH_LOCAL);
+		}        
+		else
+		{
+			MESH_DEMO_PRINT("****** non espconn_mesh_is_root *******\n");
+			espconn_mesh_enable(mesh_enable_cb, MESH_ONLINE);
+		}           
         return;
     }
 
-TEST_SCENARIO:
-    mesh_device_list_init();
-    mesh_topo_test_init();
-    mesh_json_mcast_test_init();
-    mesh_json_bcast_test_init();
-    mesh_json_p2p_test_init();
+//TEST_SCENARIO:
+//    mesh_device_list_init();
+//    mesh_topo_test_init();
+//    mesh_json_mcast_test_init();
+//    mesh_json_bcast_test_init();
+//    mesh_json_p2p_test_init();
+//	/*
+//		IF the device is the root,it can surfce and connect MQTT-service
+//	*/
+//	LED_ON(LED1);
+//	FunMqttStart(mqttClient, MQTT_HOST);
+//	user_check_ip();
+//	user_time_init();
+//	MESH_DEMO_PRINT("******* I am the root ***********\n");
 }
 
 void ICACHE_FLASH_ATTR esp_mesh_demo_test()
@@ -396,7 +507,7 @@ static bool ICACHE_FLASH_ATTR router_init()
 *******************************************************************************/
 static void ICACHE_FLASH_ATTR wait_esptouch_over(os_timer_t *timer)
 {
-    if (esptouch_is_running()) return;
+    //if (esptouch_is_running()) return;
 
     if (!timer) return;
     os_timer_disarm(timer);
@@ -406,7 +517,7 @@ static void ICACHE_FLASH_ATTR wait_esptouch_over(os_timer_t *timer)
      * enable mesh
      * after enable mesh, you should wait for the mesh_enable_cb to be triggered.
      */
-    espconn_mesh_enable(mesh_enable_cb, MESH_ONLINE);
+    espconn_mesh_enable(mesh_enable_cb, MESH_LOCAL);
 }
 
 /******************************************************************************
@@ -422,14 +533,38 @@ void user_init(void)
      */
     uart_div_modify(0, UART_CLK_FREQ / UART_BAUT_RATIO);
     uart_div_modify(1, UART_CLK_FREQ / UART_BAUT_RATIO);
-	MESH_DEMO_PRINT("user_init successful \n");
+	//uart_init_2(9600, 115200);//设置串口波特率
+	
 	if (!router_init()) {
         return;
     }
     if (!esp_mesh_demo_init())
         return;
     user_devicefind_init();
-	//mqtt_user_init();
+	
+	/*
+		MQTT_set
+	*/
+	gpio16_output_conf();
+	gpio16_output_set(1);
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_MTCK_U, FUNC_GPIO13);
+	PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0);
+	user_key_start();
+	mqttClient = (MQTT_Client *)os_zalloc(sizeof(MQTT_Client));
+	v9881_data = (V9881_Data *)os_zalloc(sizeof(V9881_Data));
+	v9881_data->jsonString = (u8 *)os_zalloc(128);
+	os_printf("User app compile time=%s\n", __TIME__);
+	cpu_id = system_get_chip_id();
+	os_bzero(temp, 12);
+	os_sprintf(temp, "%d", cpu_id);
+	os_memset(mqtt_id, 0x30, 10);
+	mqtt_id[10] = 0;
+	os_sprintf(mqtt_id + (10 - strlen(temp)), "%d", cpu_id);
+	os_bzero(mqtt_topic_send, 12);
+	os_sprintf(mqtt_topic_send, "%s_", mqtt_id);
+	os_printf("CPU_ID: %s, SendTopic:%s\r\n", mqtt_id, mqtt_topic_send);
+
+
     /*
      * while system runs smartconfig (STA mode), mesh (STA + SoftAp mode) must not been enabled,
      * So wait for esptouch to run over and then execute espconn_mesh_enable
@@ -439,6 +574,18 @@ void user_init(void)
     os_timer_disarm(wait_timer);
     os_timer_setfn(wait_timer, (os_timer_func_t *)wait_esptouch_over, wait_timer);
     os_timer_arm(wait_timer, 1000, true);
+
+
+	/*
+		about MQTT_clock     
+	*/
+	os_timer_disarm(&tcp_timer);
+	os_timer_setfn(&tcp_timer, (os_timer_func_t *)FuncSer2Net, NULL);//串口转网络任务   //需要更改里面的taskmet。只需要根节点转发对应的数据。
+
+	os_timer_disarm(&udp_timer);
+	os_timer_setfn(&udp_timer, (os_timer_func_t *)UdpFunc, NULL);//UDP广播任务
+
+	os_timer_arm(&udp_timer, 1000, 1);
 
 }
  

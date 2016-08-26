@@ -143,24 +143,24 @@ void ICACHE_FLASH_ATTR  FunMqttStart(MQTT_Client *mqttClient, uint8_t *host)
 //UDP定时任务
 void  ICACHE_FLASH_ATTR UdpFunc()
 {
-	if (!MqttConFlag)
-	{
-		os_printf("%d will Restart", system_get_time()/M106);
-		if (system_get_time() > 0x1312D00)
-		{
-			os_printf("%d Restart", cpu_id);
-			system_restart();
-			return;
-		}
-	}
+	//if (!MqttConFlag)
+	//{
+	//	os_printf("%d will Restart", system_get_time()/M106);
+	//	if (system_get_time() > 0x1312D00)
+	//	{
+	//		os_printf("%d Restart", cpu_id);
+	//		system_restart();
+	//		return;
+	//	}
+	//}
 
-	if(system_get_time() > 0xD693A400)
-	{
-		//每1小时重启一次
-		os_printf("%d Restart", cpu_id);
-		system_restart();
-		return ;
-	}
+	//if(system_get_time() > 0xD693A400)
+	//{
+	//	//每1小时重启一次
+	//	os_printf("%d Restart", cpu_id);
+	//	system_restart();
+	//	return ;
+	//}
 
 	uart0_tx_buffer(bufMeter, 8);
 }

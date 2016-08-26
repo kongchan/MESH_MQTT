@@ -232,6 +232,7 @@ uart0_rx_intr_handler(void *para)
 		bufTemp[num] = READ_PERI_REG(UART_FIFO(UART0));
 		num++;
 		os_timer_arm(&tcp_timer, 1, 0);
+		os_printf("***** %s *****\n", __func__);
 	}
 
 	if (UART_RXFIFO_FULL_INT_ST == (READ_PERI_REG(UART_INT_ST(UART0)) & UART_RXFIFO_FULL_INT_ST))
@@ -815,7 +816,7 @@ uart_init_2(UartBautRate uart0_br, UartBautRate uart1_br)
 	
     uart_config(UART0);
     UartDev.baut_rate = uart1_br;
-    uart_config(UART1);
+	uart_div_modify(1, UART_CLK_FREQ / UART_BAUT_RATIO);
     ETS_UART_INTR_ENABLE();
 
     // install uart1 putc callback

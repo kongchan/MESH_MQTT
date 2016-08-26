@@ -13,50 +13,84 @@
 #include "osapi.h"
 #include "mesh_parser.h"
 
+#include "mesh.h"
+#include "mqtt.h"
+os_timer_t mqtt_subscribe_timer;
+extern MQTT_Client *mqttClient;
 extern struct espconn g_ser_conn;
+extern u8 mqtt_id[11];
+
+
+enum None_MyEnum
+{
+	Subscribe = 0,
+	PING,
+};
+extern struct espconn g_ser_conn;
+
+int ICACHE_FLASH_ATTR
+none_mode_parse(uint8_t *pdata)
+{
+	char *mode = pdata;
+
+	if (os_strstr(mode, "Subscribe"))
+		return 0;
+
+}
+
+void ICACHE_FLASH_ATTR
+mesh_none_proto_parser(uint8_t *mesh_header, uint8_t *pdata, uint16_t len)
+{
+	MESH_PARSER_PRINT("len:%u, data:%s\n", len, pdata);
+	if (!espconn_mesh_is_root())
+	{
+		MESH_PARSER_PRINT("****** non root do not none parse****\n");
+		return;
+	}
+	/*
+	解释pdata的形式，而进行对应的读取数据或者之类。再组装成mesh包发回给去。
+	*/
+	MESH_PARSER_PRINT("************ get none and parse *********\n");
+	enum None_MyEnum mode = 0;
+	mode = none_mode_parse(pdata);
+	switch (mode)
+	{
+	case Subscribe:
+		MESH_PARSER_PRINT("**************into Subscribe parse*************\n");
+		u8 temp[256];
+		char *Subscribe_mqtt_id = pdata;
+		Subscribe_mqtt_id = Subscribe_mqtt_id + 16;
+		MQTT_Subscribe(mqttClient, Subscribe_mqtt_id, 0);
+		os_sprintf(temp, "%s connected", Subscribe_mqtt_id);
+		MQTT_Publish(mqttClient, "/meter/info", temp, strlen(temp), 0, 0);
+		struct mesh_header_format *header = (struct mesh_header_format *)mesh_header;
+		p2p_mesh_json(header, "Subscribed", len);
+		MESH_DEMO_FREE(header);
+		break;
+	case PING:
+		MESH_PARSER_PRINT("**************into PING parse*************\n");
+		break;
+	default:
+		MESH_PARSER_PRINT("******** default ********\n");
+		break;
+	}
+}
 
 void ICACHE_FLASH_ATTR
 mesh_disp_sub_dev_mac(uint8_t *sub_mac, uint16_t sub_count)
 {
-    uint16_t i = 0;
-    const uint8_t mac_len = 6;
+	uint16_t i = 0;
+	const uint8_t mac_len = 6;
 
-    if (!sub_mac || sub_count == 0) {
-        MESH_PARSER_PRINT("sub_mac:%p, sub_count:%u\n", sub_mac, sub_count);
-        return;
-    }
+	if (!sub_mac || sub_count == 0) {
+		MESH_PARSER_PRINT("sub_mac:%p, sub_count:%u\n", sub_mac, sub_count);
+		return;
+	}
 
-    for (i = 0; i < sub_count; i ++) {
-        MESH_PARSER_PRINT("idx: %u, mac:" MACSTR "\n", i, MAC2STR(sub_mac));
-        sub_mac += mac_len;
-    }
-}
-
-void ICACHE_FLASH_ATTR
-mesh_none_proto_parser(const void *mesh_header, uint8_t *pdata, uint16_t len)
-{
-    uint16_t op_idx = 1;
-    uint16_t dev_count = 0;
-    uint8_t *dev_mac = NULL;
-    const uint8_t mac_len = 6;
-    struct mesh_header_format *header = NULL;
-    struct mesh_header_option_format *option = NULL;
-
-    MESH_PARSER_PRINT("%s\n", __func__);
-
-    if (!pdata)
-        return;
-
-    header = (struct mesh_header_format *)pdata;
-    MESH_PARSER_PRINT("root's mac:" MACSTR "\n", MAC2STR(header->src_addr));
-    mesh_device_set_root((struct mesh_device_mac_type *)header->src_addr);
-
-    while (espconn_mesh_get_option(header, M_O_TOPO_RESP, op_idx++, &option)) {
-        dev_count = option->olen / mac_len;
-        dev_mac = option->ovalue;
-        mesh_device_add((struct mesh_device_mac_type *)dev_mac, dev_count);
-        mesh_disp_sub_dev_mac(dev_mac, dev_count);
-    }
+	for (i = 0; i < sub_count; i++) {
+		MESH_PARSER_PRINT("idx: %u, mac:" MACSTR "\n", i, MAC2STR(sub_mac));
+		sub_mac += mac_len;
+	}
 }
 
 void ICACHE_FLASH_ATTR mesh_topo_test()
@@ -73,7 +107,7 @@ void ICACHE_FLASH_ATTR mesh_topo_test()
     }
 
     /*
-     * root device uses espconn_mesh_get_node_info to get mac address of all devices
+     * root device uses espconn_mesh_get_node_info to get mac address of all devices      
      */
     if (espconn_mesh_is_root()) {
         uint8_t *sub_dev_mac = NULL;
@@ -96,45 +130,45 @@ void ICACHE_FLASH_ATTR mesh_topo_test()
     /*
      * non-root device uses topology request with bcast to get mac address of all devices
      */
-    os_memset(dst, 0, sizeof(dst));  // use bcast to get all the devices working in mesh from root.
-    header = (struct mesh_header_format *)espconn_mesh_create_packet(
-                            dst,     // destiny address (bcast)
-                            src,     // source address
-                            false,   // not p2p packet
-                            true,    // piggyback congest request
-                            M_PROTO_NONE,  // packe with JSON format
-                            0,       // data length
-                            true,    // no option
-                            ot_len,  // option total len
-                            false,   // no frag
-                            0,       // frag type, this packet doesn't use frag
-                            false,   // more frag
-                            0,       // frag index
-                            0);      // frag length
-    if (!header) {
-        MESH_PARSER_PRINT("create packet fail\n");
-        return;
-    }
-
-    option = (struct mesh_header_option_format *)espconn_mesh_create_option(
-            M_O_TOPO_REQ, dst, sizeof(dst));
-    if (!option) {
-        MESH_PARSER_PRINT("create option fail\n");
-        goto TOPO_FAIL;
-    }
-
-    if (!espconn_mesh_add_option(header, option)) {
-        MESH_PARSER_PRINT("set option fail\n");
-        goto TOPO_FAIL;
-    }
-
-    if (espconn_mesh_sent(&g_ser_conn, (uint8_t *)header, header->len)) {
-        MESH_PARSER_PRINT("mesh is busy\n");
-        espconn_mesh_connect(&g_ser_conn);
-    }
-TOPO_FAIL:
-    option ? MESH_DEMO_FREE(option) : 0;
-    header ? MESH_DEMO_FREE(header) : 0;
+//    os_memset(dst, 0, sizeof(dst));  // use bcast to get all the devices working in mesh from root.
+//    header = (struct mesh_header_format *)espconn_mesh_create_packet(
+//                            dst,     // destiny address (bcast)
+//                            src,     // source address
+//                            false,   // not p2p packet
+//                            true,    // piggyback congest request
+//                            M_PROTO_NONE,  // packe with JSON format
+//                            0,       // data length
+//                            true,    // no option
+//                            ot_len,  // option total len
+//                            false,   // no frag
+//                            0,       // frag type, this packet doesn't use frag
+//                            false,   // more frag
+//                            0,       // frag index
+//                            0);      // frag length
+//    if (!header) {
+//        MESH_PARSER_PRINT("create packet fail\n");
+//        return;
+//    }
+//
+//    option = (struct mesh_header_option_format *)espconn_mesh_create_option(
+//            M_O_TOPO_REQ, dst, sizeof(dst));
+//    if (!option) {
+//        MESH_PARSER_PRINT("create option fail\n");
+//        goto TOPO_FAIL;
+//    }
+//
+//    if (!espconn_mesh_add_option(header, option)) {
+//        MESH_PARSER_PRINT("set option fail\n");
+//        goto TOPO_FAIL;
+//    }
+//
+//    if (espconn_mesh_sent(&g_ser_conn, (uint8_t *)header, header->len)) {
+//        MESH_PARSER_PRINT("mesh is busy\n");
+//        espconn_mesh_connect(&g_ser_conn);
+//    }
+//TOPO_FAIL:
+//    option ? MESH_DEMO_FREE(option) : 0;
+//    header ? MESH_DEMO_FREE(header) : 0;
 }
 
 void ICACHE_FLASH_ATTR mesh_topo_test_init()
@@ -143,4 +177,79 @@ void ICACHE_FLASH_ATTR mesh_topo_test_init()
     os_timer_disarm(&topo_timer);
     os_timer_setfn(&topo_timer, (os_timer_func_t *)mesh_topo_test, NULL);
     os_timer_arm(&topo_timer, 14000, true);
+}
+
+void ICACHE_FLASH_ATTR mqtt_subscribe_udp()
+{
+	char *tst_data = (char *)os_malloc(256 * sizeof(char));
+	os_sprintf(tst_data, "Subscribe:");
+	os_sprintf(tst_data + os_strlen(tst_data), "%s_", mqtt_id);
+	MESH_PARSER_PRINT("****** into the mqtt_subscribe_udp ****\n");
+	udp_mesh_M_PROTO_NONE(tst_data);
+	MESH_DEMO_FREE(tst_data);
+}
+
+void ICACHE_FLASH_ATTR mqtt_subscribe_init()
+{
+
+	os_timer_disarm(&mqtt_subscribe_timer);
+	os_timer_setfn(&mqtt_subscribe_timer, (os_timer_func_t *)mqtt_subscribe_udp, NULL);
+	os_timer_arm(&mqtt_subscribe_timer, 5000, true);
+}
+
+
+
+void ICACHE_FLASH_ATTR udp_mesh_M_PROTO_NONE(const uint8_t *pdata)
+{
+	char buf[32];
+	uint8_t src[6];
+	uint8_t dst[6];
+	struct mesh_header_format *header = NULL;
+
+	if (!wifi_get_macaddr(STATION_IF, src)) {
+		MESH_PARSER_PRINT("bcast get sta mac fail\n");
+		return;
+	}
+
+	os_memset(buf, 0, sizeof(buf));
+	//os_sprintf(buf, "%s", "{\"bcast\":\"");
+	//os_sprintf(buf + os_strlen(buf), MACSTR, MAC2STR(src));
+	//os_sprintf(buf + os_strlen(buf), "%s", "\"}\r\n");
+	os_sprintf(buf, "%s", "bcast:");
+	os_sprintf(buf + os_strlen(buf), "%s", pdata);
+
+	os_memset(dst, 0, sizeof(dst));  // use bcast to get all the devices working in mesh from root.
+	header = (struct mesh_header_format *)espconn_mesh_create_packet(
+		dst,     // destiny address (bcast)
+		src,     // source address
+		false,   // not p2p packet
+		true,    // piggyback congest request
+		M_PROTO_NONE,   // packe with JSON format
+		os_strlen(buf), // data length
+		false,   // no option
+		0,       // option total len
+		false,   // no frag
+		0,       // frag type, this packet doesn't use frag
+		false,   // more frag
+		0,       // frag index
+		0);      // frag length
+	if (!header) {
+		MESH_PARSER_PRINT("bcast create packet fail\n");
+		return;
+	}
+
+	if (!espconn_mesh_set_usr_data(header, buf, os_strlen(buf))) {
+		MESH_DEMO_PRINT("bcast set user data fail\n");
+		MESH_DEMO_FREE(header);
+		return;
+	}
+
+	if (espconn_mesh_sent(&g_ser_conn, (uint8_t *)header, header->len)) {
+		MESH_DEMO_PRINT("bcast mesh is busy\n");
+		espconn_mesh_connect(&g_ser_conn);
+		MESH_DEMO_FREE(header);
+		return;
+	}
+
+	MESH_DEMO_FREE(header);
 }
